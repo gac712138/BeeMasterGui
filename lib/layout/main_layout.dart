@@ -1,4 +1,3 @@
-// lib/layout/main_layout.dart
 import 'package:flutter/material.dart';
 import '../pages/device_import.dart';
 import '../pages/login_page.dart';
@@ -110,7 +109,8 @@ class _MainLayoutState extends State<MainLayout> {
             child: Padding(
               padding: const EdgeInsets.all(30.0),
               child: _selectedIndex == 0
-                  ? DeviceImportPage(onRefresh: _refreshUI)
+                  // ✅ 修正：移除 onRefresh 參數
+                  ? const DeviceImportPage()
                   : LoginPage(onLoginSuccess: _refreshUI),
             ),
           ),

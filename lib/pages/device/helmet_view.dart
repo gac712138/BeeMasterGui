@@ -4,9 +4,13 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' as excel_pkg;
 import '../../models/worker_import_data.dart';
+// ❌ 已移除：不再這裡 import burn_task_sheet
 
 class HelmetView extends StatefulWidget {
-  const HelmetView({super.key});
+  // ✅ 修改 1: 新增 callback，讓父層知道資料解析完成了
+  final Function(List<WorkerImportData>)? onDataParsed;
+
+  const HelmetView({super.key, this.onDataParsed});
 
   @override
   State<HelmetView> createState() => _HelmetViewState();
@@ -107,6 +111,11 @@ class _HelmetViewState extends State<HelmetView> {
         _isParsing = false;
       });
 
+      // ✅ 修改 2: 資料解析完畢後，通知父層
+      if (widget.onDataParsed != null) {
+        widget.onDataParsed!(_parsedWorkers);
+      }
+
       _showMsg("解析完成，共計 ${_parsedWorkers.length} 筆資料", Colors.green);
     } catch (e) {
       setState(() => _isParsing = false);
@@ -141,6 +150,7 @@ class _HelmetViewState extends State<HelmetView> {
               "工作臺",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
+            // ✅ 修改 3: 移除了「開啟燒錄任務」按鈕，只保留下載範例
             TextButton.icon(
               onPressed: _downloadTemplate,
               icon: const Icon(Icons.download, size: 16),
@@ -199,7 +209,11 @@ class _HelmetViewState extends State<HelmetView> {
               ),
               const Spacer(),
               TextButton(
-                onPressed: () => setState(() => _parsedWorkers = []),
+                onPressed: () {
+                  setState(() => _parsedWorkers = []);
+                  // 清除時也要通知父層清空
+                  if (widget.onDataParsed != null) widget.onDataParsed!([]);
+                },
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.red[400],
                   padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -259,7 +273,6 @@ class _HelmetViewState extends State<HelmetView> {
                   rows: _parsedWorkers.map((worker) {
                     final dasIdValid = _isDasIdValid(worker.dasId);
                     final genderValid = _isGenderValid(worker.gender);
-
                     return DataRow(
                       cells: [
                         DataCell(

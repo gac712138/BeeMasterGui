@@ -1,13 +1,14 @@
-// lib/pages/device_import.dart
 import 'package:flutter/material.dart';
 import 'device/helmet_view.dart';
 import 'device/beacon_view.dart';
 import 'device/components/dsm_settings_card.dart';
 import '../app_state.dart';
+// 引入 Model 以便識別 WorkerImportData
+import '../models/worker_import_data.dart';
 
 class DeviceImportPage extends StatefulWidget {
-  final VoidCallback onRefresh;
-  const DeviceImportPage({super.key, required this.onRefresh});
+  // ✅ 移除 onRefresh，配合 MainLayout 的修改
+  const DeviceImportPage({super.key});
 
   @override
   State<DeviceImportPage> createState() => _DeviceImportPageState();
@@ -16,9 +17,13 @@ class DeviceImportPage extends StatefulWidget {
 class _DeviceImportPageState extends State<DeviceImportPage> {
   int _currentSubTab = 0;
 
+  // ✅ 狀態提升：用來儲存從工作臺 (HelmetView) 解析出來的 ID
+  List<String> _currentDasIds = [];
+
   @override
   Widget build(BuildContext context) {
     final double screenWidth = MediaQuery.of(context).size.width;
+    // 右側面板寬度設定
     final double rightPanelWidth = (screenWidth * 0.25).clamp(280.0, 450.0);
 
     return Column(
@@ -36,13 +41,27 @@ class _DeviceImportPageState extends State<DeviceImportPage> {
               // 👈 左側：工作臺 (安全帽或 Beacon)
               Expanded(
                 child: _currentSubTab == 0
-                    ? const HelmetView()
+                    ? HelmetView(
+                        // ✅ 監聽：當 Excel 解析完成，更新父層狀態
+                        onDataParsed: (List<WorkerImportData> workers) {
+                          setState(() {
+                            // 取出 DasID 並過濾空值，轉為 List<String>
+                            _currentDasIds = workers
+                                .map((w) => w.dasId)
+                                .where((id) => id.isNotEmpty)
+                                .toList()
+                                .cast<
+                                  String
+                                >(); // ⚠️ 這裡加了 cast<String>() 確保型別正確，解決報錯
+                          });
+                        },
+                      )
                     : const BeaconView(),
               ),
 
               const SizedBox(width: 20),
 
-              // 👉 右側：OPS/DSM 設定 (現在也位於線下方了)
+              // 👉 右側：OPS/DSM 設定
               SizedBox(
                 width: rightPanelWidth,
                 child: SingleChildScrollView(
@@ -50,7 +69,8 @@ class _DeviceImportPageState extends State<DeviceImportPage> {
                     children: [
                       _buildOpsStatusCard(),
                       const SizedBox(height: 20),
-                      const DsmSettingsCard(),
+                      // ✅ 傳遞：將 ID 傳給右側卡片，讓按鈕變亮
+                      DsmSettingsCard(validDasIds: _currentDasIds),
                     ],
                   ),
                 ),
