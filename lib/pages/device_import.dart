@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
-import 'device/helmet_view.dart';
-import 'device/beacon_view.dart';
-import 'device/components/dsm_settings_card.dart';
-import '../app_state.dart';
-// 引入 Model 以便識別 WorkerImportData
-import '../models/worker_import_data.dart';
+
+// ✅ 使用絕對路徑引用，解決 "Method not defined" 與路徑混亂問題
+import 'package:beemaster_ui/pages/device/helmet_view.dart';
+import 'package:beemaster_ui/pages/device/beacon_view.dart';
+import 'package:beemaster_ui/pages/device/components/dsm_settings_card.dart'; // 👈 補上這行，錯誤就會消失
+//import 'package:beemaster_ui/utils/burn_task_sheet.dart';
+import 'package:beemaster_ui/app_state.dart';
+import 'package:beemaster_ui/models/worker_import_data.dart';
 
 class DeviceImportPage extends StatefulWidget {
-  // ✅ 移除 onRefresh，配合 MainLayout 的修改
   const DeviceImportPage({super.key});
 
   @override
@@ -17,7 +18,7 @@ class DeviceImportPage extends StatefulWidget {
 class _DeviceImportPageState extends State<DeviceImportPage> {
   int _currentSubTab = 0;
 
-  // ✅ 狀態提升：用來儲存從工作臺 (HelmetView) 解析出來的 ID
+  // 狀態提升：用來儲存從工作臺 (HelmetView) 解析出來的 ID
   List<String> _currentDasIds = [];
 
   @override
@@ -29,7 +30,7 @@ class _DeviceImportPageState extends State<DeviceImportPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 1. 頂部導覽 (分隔線在這之下)
+        // 1. 頂部導覽
         _buildSubTabs(),
         const SizedBox(height: 20),
 
@@ -42,17 +43,14 @@ class _DeviceImportPageState extends State<DeviceImportPage> {
               Expanded(
                 child: _currentSubTab == 0
                     ? HelmetView(
-                        // ✅ 監聽：當 Excel 解析完成，更新父層狀態
+                        // 監聽：當 Excel 解析完成，更新父層狀態
                         onDataParsed: (List<WorkerImportData> workers) {
                           setState(() {
-                            // 取出 DasID 並過濾空值，轉為 List<String>
+                            // 取出 DasID 並過濾空值
                             _currentDasIds = workers
                                 .map((w) => w.dasId)
                                 .where((id) => id.isNotEmpty)
-                                .toList()
-                                .cast<
-                                  String
-                                >(); // ⚠️ 這裡加了 cast<String>() 確保型別正確，解決報錯
+                                .toList();
                           });
                         },
                       )
@@ -69,7 +67,7 @@ class _DeviceImportPageState extends State<DeviceImportPage> {
                     children: [
                       _buildOpsStatusCard(),
                       const SizedBox(height: 20),
-                      // ✅ 傳遞：將 ID 傳給右側卡片，讓按鈕變亮
+                      // ✅ 這裡現在不會報錯了，因為上面有正確 import
                       DsmSettingsCard(validDasIds: _currentDasIds),
                     ],
                   ),

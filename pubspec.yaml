@@ -45,6 +45,8 @@ dependencies:
   flutter_libserialport: ^0.6.0
   collection: ^1.17.0
   flutter_blue_plus: ^1.32.0
+  flutter_blue_plus_windows: ^1.25.2
+  intl: ^0.20.2
   
 dev_dependencies:
   flutter_test:
@@ -71,6 +73,7 @@ flutter:
   assets:
     - assets/icons/
     - assets/template.xlsx  # ✅ 註冊你的實體範例檔
+    - assets/bin/worker.exe
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

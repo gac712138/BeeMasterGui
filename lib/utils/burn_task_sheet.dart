@@ -1,34 +1,5 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-
-import 'package:beemaster_ui/utils/com_scanner.dart';
-import 'package:beemaster_ui/utils/protocol/ads_parser.dart';
-import 'package:beemaster_ui/services/burn_worker.dart';
-import 'package:beemaster_ui/utils/ble_scanner.dart';
-
-// 定義任務狀態
-enum JobStatus {
-  scanning, // 正在尋找藍牙訊號
-  queued, // 已找到 MAC，等待 Dongle
-  burning, // 正在燒錄中
-  success, // 成功
-  failed, // 失敗 (等待重試)
-}
-
-class TaskItem {
-  final String dasId;
-  String? macAddress;
-  JobStatus status;
-  double progress;
-  List<String> logs;
-  String? assignedPort; // 目前被誰認領
-
-  TaskItem(this.dasId)
-    : status = JobStatus.scanning,
-      progress = 0.0,
-      logs = [],
-      macAddress = null;
-}
+import 'package:beemaster_ui/controllers/burn_task_controller.dart';
 
 class BurnTaskOverlay extends StatefulWidget {
   final String adsFilePath;
@@ -47,240 +18,227 @@ class BurnTaskOverlay extends StatefulWidget {
 }
 
 class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
-  // UI 狀態
   bool _isExpanded = true;
-  bool _isSystemRunning = false; // 總開關
+  bool _showExitConfirm = false;
 
-  // 資源池
-  List<String> _allDonglePorts = []; // 所有偵測到的 COM
-  final Set<String> _busyDonglePorts = {}; // 正在忙碌的 COM
-
-  // 任務清單 (DasID -> Task)
-  late Map<String, TaskItem> _tasks;
-
-  // 檔案快取
-  AdsFileMeta? _fileMeta;
-
-  // 定時調度器
-  Timer? _schedulerTimer;
+  late BurnTaskController _controller;
+  final ScrollController _logScrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    // 1. 初始化任務
-    _tasks = {for (var id in widget.targetIds) id: TaskItem(id)};
-
-    // 2. 預載入檔案 (只讀一次)
-    _loadFile();
-
-    // 3. 掃描 COM Port
-    _refreshDongles();
+    _controller = BurnTaskController(
+      targetIds: widget.targetIds,
+      onStateChanged: () {
+        if (mounted) {
+          setState(() {});
+          if (_logScrollController.hasClients) {
+            _logScrollController.jumpTo(
+              _logScrollController.position.maxScrollExtent,
+            );
+          }
+        }
+      },
+      onMessage: (msg, isError) {
+        if (mounted) _showMsg(msg, isError ? Colors.red : Colors.green);
+      },
+    );
+    _controller.init(widget.adsFilePath);
   }
 
   @override
   void dispose() {
-    _schedulerTimer?.cancel();
-    BleScanner.stop();
+    _controller.dispose();
+    _logScrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadFile() async {
-    final meta = await AdsParser.parse(widget.adsFilePath);
-    if (meta != null) {
-      _fileMeta = meta;
-      _logSystem("檔案載入成功 (${meta.sizeKB} KB)");
+  void _handleClose() {
+    // 🔥 優化：如果全部完成了，直接關閉，不用跳確認窗
+    if (_controller.isAllTasksCompleted) {
+      _confirmClose();
+      return;
+    }
+
+    // 檢查是否有正在進行的任務 (包含 burning, pending, verifying)
+    bool isBusy =
+        _controller.isSystemRunning ||
+        _controller.tasks.values.any(
+          (t) =>
+              t.status == JobStatus.burning ||
+              t.status == JobStatus.pending ||
+              t.status == JobStatus.verifying,
+        );
+
+    if (isBusy) {
+      setState(() {
+        _showExitConfirm = true;
+      });
     } else {
-      _logSystem("❌ 檔案載入失敗！無法啟動任務");
+      _confirmClose();
     }
   }
 
-  void _logSystem(String msg) {
-    print("[SYSTEM] $msg");
-  }
-
-  void _refreshDongles() {
-    final devices = ComScanner.findDonglePorts();
-    setState(() {
-      _allDonglePorts = devices.map((d) => d.portName).toList();
-    });
-  }
-
-  // ==========================================
-  // 核心邏輯：啟動系統
-  // ==========================================
-  void _startSystem() {
-    if (_fileMeta == null) {
-      _showMsg("檔案尚未準備好，無法啟動", Colors.red);
-      return;
-    }
-    if (_allDonglePorts.isEmpty) {
-      _showMsg("沒有可用的 Dongle，無法啟動", Colors.red);
-      return;
-    }
-
-    setState(() => _isSystemRunning = true);
-
-    // 1. 啟動藍牙掃描 (生產者)
-    BleScanner.startListening(
-      onDeviceFound: (name, mac, rssi) {
-        // 🔥 除錯用：印出所有掃到的東西到 VSCode Console
-        // 這樣如果 UI 沒反應，看 Console 就知道是不是名字有空白鍵之類的差異
-        print("[BLE RAW] Name: '$name' | MAC: $mac | RSSI: $rssi");
-
-        // 遍歷所有任務，看有沒有匹配的
-        _tasks.forEach((dasId, task) {
-          // 比對邏輯：忽略大小寫，並修剪前後空白
-          // 您的 CLI 邏輯是 strings.Contains(name, targetID)
-          if (name.isNotEmpty &&
-              name.toLowerCase().contains(dasId.toLowerCase().trim())) {
-            if (task.macAddress == null) {
-              setState(() {
-                task.macAddress = mac;
-                task.status = JobStatus.queued;
-                // UI 上顯示捕獲
-                task.logs.add("✅ 捕獲目標: $name ($mac)");
-                task.logs.add("📡 訊號強度: $rssi dBm");
-              });
-            }
-          }
-        });
-      },
-      onError: (err) {
-        _logSystem("BLE Error: $err");
-        _showMsg("藍牙掃描錯誤: $err", Colors.red);
-      },
-    );
-
-    // 2. 啟動調度器 (消費者分配邏輯) - 每 1 秒檢查一次
-    _schedulerTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      _runScheduler();
-    });
-  }
-
-  // 調度器：負責將「閒置 Dongle」分配給「已就緒任務」
-  void _runScheduler() {
-    // 找出閒置的 Dongle
-    List<String> idleDongles = _allDonglePorts
-        .where((p) => !_busyDonglePorts.contains(p))
-        .toList();
-
-    if (idleDongles.isEmpty) return; // 沒人有空
-
-    // 找出需要執行的任務 (Queued 或 Failed 需要重試的)
-    List<TaskItem> pendingTasks = _tasks.values
-        .where(
-          (t) => t.status == JobStatus.queued || t.status == JobStatus.failed,
-        )
-        .toList();
-
-    if (pendingTasks.isEmpty) return; // 沒事可做
-
-    // --- 開始配對 ---
-    for (var task in pendingTasks) {
-      if (idleDongles.isEmpty) break; // Dongle 用光了
-
-      String port = idleDongles.removeAt(0); // 取出一個 Dongle
-      _assignWorker(port, task);
-    }
-  }
-
-  // 指派並執行
-  Future<void> _assignWorker(String port, TaskItem task) async {
-    setState(() {
-      _busyDonglePorts.add(port); // 標記 Dongle 忙碌
-      task.status = JobStatus.burning;
-      task.assignedPort = port;
-      task.logs.add("🚀 分配給 Dongle $port 開始燒錄...");
-    });
-
-    try {
-      final worker = BurnWorker(
-        portName: port,
-        taskId: task.dasId,
-        targetMac: task.macAddress!, // 一定有值，因為只有 Queued 才會進來
-        meta: _fileMeta!,
-        onLog: (msg) {
-          if (mounted) setState(() => task.logs.add(msg));
-        },
-        onProgress: (pct) {
-          if (mounted) setState(() => task.progress = pct);
-        },
-      );
-
-      bool success = await worker.start();
-
-      if (mounted) {
-        setState(() {
-          if (success) {
-            task.status = JobStatus.success;
-            task.logs.add("🎉 燒錄成功！任務結束。");
-          } else {
-            task.status = JobStatus.failed; // 標記失敗，讓調度器下次重新抓取
-            task.logs.add("❌ 燒錄失敗，釋放 Dongle，等待接手...");
-            task.assignedPort = null;
-          }
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          task.status = JobStatus.failed;
-          task.logs.add("💥 發生異常: $e");
-          task.assignedPort = null;
-        });
-      }
-    } finally {
-      // 無論成功失敗，都釋放 Dongle
-      if (mounted) {
-        setState(() {
-          _busyDonglePorts.remove(port);
-        });
-      }
-    }
+  void _confirmClose() {
+    _controller.stopSystem();
+    widget.onClose();
   }
 
   void _showMsg(String msg, Color color) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: color,
+        duration: const Duration(seconds: 1),
+      ),
+    );
   }
 
-  // ==========================================
-  // UI 構建
-  // ==========================================
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final targetWidth = (screenWidth - 40).clamp(300.0, 1200.0);
+    final screenSize = MediaQuery.of(context).size;
+    final double width = _isExpanded ? screenSize.width : 70;
+    final double height = _isExpanded ? screenSize.height : 70;
+    final margin = _isExpanded
+        ? const EdgeInsets.all(24)
+        : const EdgeInsets.only(right: 20, bottom: 20);
 
     return Material(
       color: Colors.transparent,
+      child: Stack(
+        children: [
+          AnimatedAlign(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            alignment: _isExpanded ? Alignment.center : Alignment.bottomRight,
+            child: Padding(
+              padding: margin,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                width: _isExpanded ? (width - 48) : width,
+                height: _isExpanded ? (height - 48) : height,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(_isExpanded ? 16 : 35),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black26, blurRadius: 20),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(_isExpanded ? 16 : 35),
+                  child: _isExpanded ? _buildDashboard() : _buildFloatingBall(),
+                ),
+              ),
+            ),
+          ),
+          if (_showExitConfirm) _buildExitDialog(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExitDialog() {
+    return Container(
+      color: Colors.black54,
       child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          width: _isExpanded ? targetWidth : 70,
-          height: _isExpanded ? 650 : 70,
-          child: _isExpanded ? _buildDashboard() : _buildFloatingBall(),
+        child: Container(
+          width: 400,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 20)],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "確認結束任務？",
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              const Text("作業正在進行中，確定要離開嗎？", style: TextStyle(fontSize: 16)),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => setState(() => _showExitConfirm = false),
+                    child: const Text("取消"),
+                  ),
+                  ElevatedButton(
+                    onPressed: _confirmClose,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text("強制結束"),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildDashboard() {
+    return Column(
+      children: [
+        _buildHeader(),
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Column(
+                  children: [
+                    _buildSectionTitle("任務進度 (${widget.targetIds.length})"),
+                    Expanded(child: _buildTaskList()),
+                  ],
+                ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                flex: 5,
+                child: Column(
+                  children: [
+                    _buildSectionTitle("系統日誌 Console"),
+                    Expanded(child: _buildConsole()),
+                  ],
+                ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                flex: 3,
+                child: Column(
+                  children: [
+                    _buildSectionTitle("Dongle 獵人資源池"),
+                    Expanded(child: _buildDongleGrid()),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        _buildFooter(),
+      ],
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 20)],
-      ),
-      child: Column(
-        children: [
-          _buildHeader(),
-          Expanded(flex: 4, child: _buildTaskList()),
-          const Divider(height: 1),
-          Expanded(flex: 2, child: _buildDongleList()),
-          _buildFooter(),
-        ],
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      color: Colors.grey[100],
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.black54,
+        ),
       ),
     );
   }
@@ -289,37 +247,38 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
     return Container(
       color: const Color(0xFFFAFAFA),
       child: ListView.builder(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         itemCount: widget.targetIds.length,
         itemBuilder: (context, index) {
           final id = widget.targetIds[index];
-          final task = _tasks[id]!;
-          return _buildTaskCard(task);
+          if (!_controller.tasks.containsKey(id)) return const SizedBox();
+          final task = _controller.tasks[id]!;
+          return _buildSimpleTaskCard(task);
         },
       ),
     );
   }
 
-  Widget _buildTaskCard(TaskItem task) {
-    Color statusColor;
-    IconData statusIcon;
-    String statusText;
+  Widget _buildSimpleTaskCard(TaskItem task) {
+    Color statusColor = Colors.grey;
+    IconData statusIcon = Icons.help;
+    String statusText = "未知";
 
     switch (task.status) {
-      case JobStatus.scanning:
-        statusColor = Colors.grey;
+      case JobStatus.pending:
+        statusColor = Colors.blueGrey;
         statusIcon = Icons.radar;
-        statusText = "正在搜尋裝置...";
-        break;
-      case JobStatus.queued:
-        statusColor = Colors.blue;
-        statusIcon = Icons.hourglass_top;
-        statusText = "已找到 (${task.macAddress})，等待 Dongle...";
+        statusText = "搜尋/等待中...";
         break;
       case JobStatus.burning:
         statusColor = Colors.orange;
         statusIcon = Icons.local_fire_department;
-        statusText = "燒錄中 (由 ${task.assignedPort} 執行)";
+        statusText = "燒錄中 (${(task.progress * 100).toInt()}%)";
+        break;
+      case JobStatus.verifying: // 🔥 新增：顯示驗證中狀態
+        statusColor = Colors.purple;
+        statusIcon = Icons.compare_arrows;
+        statusText = "重啟比對中...";
         break;
       case JobStatus.success:
         statusColor = Colors.green;
@@ -329,116 +288,155 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
       case JobStatus.failed:
         statusColor = Colors.red;
         statusIcon = Icons.error;
-        statusText = "失敗 - 等待重試";
+        statusText = "失敗 (重試中)";
         break;
     }
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ExpansionTile(
-        initiallyExpanded: true,
-        leading: Icon(statusIcon, color: statusColor),
-        title: Text(
-          task.dasId,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              statusText,
-              style: TextStyle(color: statusColor, fontSize: 12),
+            Row(
+              children: [
+                Icon(statusIcon, color: statusColor, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    task.dasId,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+                Text(
+                  statusText,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
+            // 燒錄進度條
             if (task.status == JobStatus.burning)
-              LinearProgressIndicator(value: task.progress),
-          ],
-        ),
-        children: [
-          Container(
-            height: 100,
-            color: Colors.black87,
-            padding: const EdgeInsets.all(8),
-            child: ListView.builder(
-              itemCount: task.logs.length,
-              itemBuilder: (c, i) => Text(
-                task.logs[i],
-                style: const TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 11,
-                  fontFamily: 'monospace',
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(
+                  value: task.progress,
+                  backgroundColor: Colors.orange[50],
+                  color: Colors.orange,
+                  minHeight: 4,
                 ),
               ),
-            ),
-          ),
-        ],
+            // 🔥 驗證進度條 (Infinite Loading)
+            if (task.status == JobStatus.verifying)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(
+                  backgroundColor: Colors.purple[50],
+                  color: Colors.purple,
+                  minHeight: 4,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildDongleList() {
+  Widget _buildConsole() {
     return Container(
-      padding: const EdgeInsets.all(16),
-      color: Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                "Dongle 資源池 (${_allDonglePorts.length})",
-                style: const TextStyle(fontWeight: FontWeight.bold),
+      color: const Color(0xFF1E1E1E),
+      child: ListView.builder(
+        controller: _logScrollController,
+        padding: const EdgeInsets.all(12),
+        itemCount: _controller.globalLogs.length,
+        itemBuilder: (context, index) {
+          final log = _controller.globalLogs[index];
+          Color textColor = Colors.greenAccent;
+          if (log.contains("❌") || log.contains("💥")) {
+            textColor = Colors.redAccent;
+          } else if (log.contains("⚠️")) {
+            textColor = Colors.orangeAccent;
+          } else if (log.contains("[SYSTEM]")) {
+            textColor = Colors.cyanAccent;
+          }
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              log,
+              style: TextStyle(
+                color: textColor,
+                fontFamily: 'monospace',
+                fontSize: 12,
               ),
-              TextButton.icon(
-                onPressed: _isSystemRunning ? null : _refreshDongles,
-                icon: const Icon(Icons.refresh),
-                label: const Text("重整"),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _allDonglePorts.length,
-              itemBuilder: (context, index) {
-                final port = _allDonglePorts[index];
-                final isBusy = _busyDonglePorts.contains(port);
-                return Container(
-                  width: 120,
-                  margin: const EdgeInsets.only(right: 10),
-                  decoration: BoxDecoration(
-                    color: isBusy ? Colors.orange[50] : Colors.green[50],
-                    border: Border.all(
-                      color: isBusy ? Colors.orange : Colors.green,
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.usb,
-                        color: isBusy ? Colors.orange : Colors.green,
-                      ),
-                      Text(
-                        port,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        isBusy ? "工作中" : "閒置",
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: isBusy ? Colors.orange : Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
             ),
-          ),
-        ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDongleGrid() {
+    final ports = _controller.allDonglePorts;
+
+    if (ports.isEmpty) {
+      return const Center(
+        child: Text("無可用 Dongle", style: TextStyle(color: Colors.grey)),
+      );
+    }
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.all(10),
+      child: GridView.builder(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 1.8,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+        ),
+        itemCount: ports.length,
+        itemBuilder: (context, index) {
+          final port = ports[index];
+          final isBusy = _controller.busyDonglePorts.contains(port);
+
+          return Container(
+            decoration: BoxDecoration(
+              color: isBusy ? Colors.orange[50] : Colors.green[50],
+              border: Border.all(color: isBusy ? Colors.orange : Colors.green),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.usb, color: isBusy ? Colors.orange : Colors.green),
+                const SizedBox(height: 4),
+                Text(
+                  port,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                Text(
+                  isBusy ? "獵捕中" : "待命",
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: isBusy ? Colors.orange : Colors.green,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -446,40 +444,61 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-      color: Colors.grey[100],
+      color: Colors.white,
       child: Row(
         children: [
           const Icon(Icons.settings_input_component, color: Colors.blue),
           const SizedBox(width: 10),
           const Text(
-            "自動化產線控制中心",
+            "自動化產線控制中心 (全自動模式)",
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () => widget.onClose(),
+            tooltip: "最小化",
+            icon: const Icon(Icons.remove),
+            onPressed: () => setState(() => _isExpanded = false),
+          ),
+          IconButton(
+            tooltip: "結束任務",
+            icon: const Icon(Icons.close, color: Colors.red),
+            onPressed: _handleClose,
           ),
         ],
       ),
     );
   }
 
+  // 🔥 關鍵修改：按鈕狀態邏輯
   Widget _buildFooter() {
-    return Padding(
+    // 檢查是否所有任務都已成功
+    bool allCompleted = _controller.isAllTasksCompleted;
+
+    return Container(
       padding: const EdgeInsets.all(16),
+      color: Colors.white,
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(
-          onPressed: _isSystemRunning ? null : _startSystem,
+          // 如果全部完成，按鈕功能變成「關閉視窗」
+          // 否則，如果系統正在跑則 disable (防止重複按)
+          onPressed: allCompleted
+              ? _confirmClose
+              : (_controller.isSystemRunning ? null : _controller.startSystem),
+
           style: ElevatedButton.styleFrom(
             padding: const EdgeInsets.symmetric(vertical: 18),
-            backgroundColor: Colors.blue[800],
+            // 全部完成變綠色，否則為藍色
+            backgroundColor: allCompleted
+                ? Colors.green[700]
+                : Colors.blue[800],
             foregroundColor: Colors.white,
           ),
-          child: _isSystemRunning
-              ? const Text("系統運行中 (自動調度)...")
-              : const Text("啟動自動化燒錄作業"),
+          child: allCompleted
+              ? const Text("✅ 所有任務已完成 (點擊關閉)")
+              : (_controller.isSystemRunning
+                    ? const Text("系統運行中 (自動獵人模式)...")
+                    : const Text("啟動全自動燒錄")),
         ),
       ),
     );
@@ -493,7 +512,7 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
           color: Colors.blue,
           shape: BoxShape.circle,
         ),
-        child: const Icon(Icons.engineering, color: Colors.white),
+        child: const Icon(Icons.engineering, color: Colors.white, size: 30),
       ),
     );
   }
