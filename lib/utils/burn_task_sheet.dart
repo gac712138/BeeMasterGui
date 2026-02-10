@@ -215,7 +215,7 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
                 flex: 3,
                 child: Column(
                   children: [
-                    _buildSectionTitle("Dongle 獵人資源池"),
+                    _buildSectionTitle("Dongle 資源池"),
                     Expanded(child: _buildDongleGrid()),
                   ],
                 ),
@@ -253,13 +253,15 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
           final id = widget.targetIds[index];
           if (!_controller.tasks.containsKey(id)) return const SizedBox();
           final task = _controller.tasks[id]!;
-          return _buildSimpleTaskCard(task);
+          // 🔥 改用可展開的卡片
+          return _buildExpandableTaskCard(task);
         },
       ),
     );
   }
 
-  Widget _buildSimpleTaskCard(TaskItem task) {
+  // 🔥 核心修改：可展開的任務卡片 (顯示音軌詳情)
+  Widget _buildExpandableTaskCard(TaskItem task) {
     Color statusColor = Colors.grey;
     IconData statusIcon = Icons.help;
     String statusText = "未知";
@@ -275,7 +277,7 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
         statusIcon = Icons.local_fire_department;
         statusText = "燒錄中 (${(task.progress * 100).toInt()}%)";
         break;
-      case JobStatus.verifying: // 🔥 新增：顯示驗證中狀態
+      case JobStatus.verifying:
         statusColor = Colors.purple;
         statusIcon = Icons.compare_arrows;
         statusText = "重啟比對中...";
@@ -283,7 +285,7 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
       case JobStatus.success:
         statusColor = Colors.green;
         statusIcon = Icons.check_circle;
-        statusText = "完成";
+        statusText = "完成 (點擊展開)";
         break;
       case JobStatus.failed:
         statusColor = Colors.red;
@@ -292,58 +294,139 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
         break;
     }
 
+    // 卡片標題內容
+    Widget contentRow = Row(
+      children: [
+        Icon(statusIcon, color: statusColor, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            task.dasId,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+        ),
+        Text(
+          statusText,
+          style: TextStyle(
+            color: statusColor,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+
+    // 1. 若非成功狀態，顯示普通卡片 + 進度條
+    if (task.status != JobStatus.success) {
+      return Card(
+        elevation: 1,
+        margin: const EdgeInsets.only(bottom: 8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+          child: Column(
+            children: [
+              contentRow,
+              if (task.status == JobStatus.burning)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: LinearProgressIndicator(
+                    value: task.progress,
+                    backgroundColor: Colors.orange[50],
+                    color: Colors.orange,
+                    minHeight: 4,
+                  ),
+                ),
+              if (task.status == JobStatus.verifying)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: LinearProgressIndicator(
+                    backgroundColor: Colors.purple[50],
+                    color: Colors.purple,
+                    minHeight: 4,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 2. 若為成功狀態，顯示可展開卡片 (ExpansionTile)
     return Card(
-      elevation: 1,
+      elevation: 2,
       margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: Colors.green, width: 1), // 綠框強調
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+          title: contentRow,
           children: [
-            Row(
-              children: [
-                Icon(statusIcon, color: statusColor, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    task.dasId,
-                    style: const TextStyle(
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(color: Colors.green[50]),
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "✅ 安全帽內音訊詳細清單",
+                    style: TextStyle(
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                      color: Colors.green,
                     ),
                   ),
-                ),
-                Text(
-                  statusText,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+                  const Divider(height: 10),
+                  if (task.tracks.isEmpty)
+                    const Text("無詳細資訊", style: TextStyle(color: Colors.grey)),
+
+                  // 列出所有音軌
+                  ...task.tracks.map(
+                    (t) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.check,
+                            color: Colors.green,
+                            size: 14,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            "#${t.index}",
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "ID: ${t.id}",
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            "Size: ${t.size}",
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.blueGrey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-            // 燒錄進度條
-            if (task.status == JobStatus.burning)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: LinearProgressIndicator(
-                  value: task.progress,
-                  backgroundColor: Colors.orange[50],
-                  color: Colors.orange,
-                  minHeight: 4,
-                ),
-              ),
-            // 🔥 驗證進度條 (Infinite Loading)
-            if (task.status == JobStatus.verifying)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: LinearProgressIndicator(
-                  backgroundColor: Colors.purple[50],
-                  color: Colors.purple,
-                  minHeight: 4,
-                ),
-              ),
           ],
         ),
       ),
@@ -427,7 +510,7 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
                   ),
                 ),
                 Text(
-                  isBusy ? "獵捕中" : "待命",
+                  isBusy ? "掃描中" : "待命",
                   style: TextStyle(
                     fontSize: 10,
                     color: isBusy ? Colors.orange : Colors.green,
@@ -469,7 +552,6 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
     );
   }
 
-  // 🔥 關鍵修改：按鈕狀態邏輯
   Widget _buildFooter() {
     // 檢查是否所有任務都已成功
     bool allCompleted = _controller.isAllTasksCompleted;
@@ -497,7 +579,7 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
           child: allCompleted
               ? const Text("✅ 所有任務已完成 (點擊關閉)")
               : (_controller.isSystemRunning
-                    ? const Text("系統運行中 (自動獵人模式)...")
+                    ? const Text("系統運行中 (自動燒錄模式)...")
                     : const Text("啟動全自動燒錄")),
         ),
       ),
