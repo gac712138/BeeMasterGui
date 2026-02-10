@@ -66,41 +66,36 @@ class BurnTaskService {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen((line) {
-            // 解析 Go 協議
             if (line.startsWith('PROGRESS:')) {
-              // 舊格式: PROGRESS:50
-              // 新格式: PROGRESS:MAC_ADDRESS:50
+              // 格式: PROGRESS:MAC_ADDRESS:PERCENT
               try {
                 final parts = line.split(':');
-                // 取最後一個部分作為百分比，這樣相容兩種格式
                 if (parts.length >= 2) {
                   final pctStr = parts.last;
                   final pct = int.tryParse(pctStr) ?? 0;
                   onProgress(pct / 100.0);
                 }
               } catch (e) {
-                // 解析失敗忽略
+                /* 解析失敗忽略 */
               }
             } else if (line.startsWith('LOG:')) {
-              // 格式: LOG:連線成功
-              onLog("🤖 ${line.substring(4)}");
+              // 🔥 修正：拿掉 🤖，直接傳送 Go 處理好的對齊字串
+              // Go 傳來的是: LOG:[COM5  ][DasLoop-LLB...] 訊息內容
+              onLog(line.substring(4).trim());
             } else if (line.startsWith('ERROR:')) {
-              // 格式: ERROR:連線超時
-              onLog("❌ ${line.substring(6)}");
+              // 🔥 修正：統一風格，移除 ❌ 符號
+              onLog("[ERROR ] ${line.substring(6).trim()}");
             } else if (line.startsWith('SUCCESS')) {
-              // 格式: SUCCESS
-              onLog("✅ 任務成功完成！");
+              // 保持 Success 邏輯
+              onLog("任務成功完成");
               onProgress(1.0);
             } else {
-              // 其他未格式化的 Go Printf
-              if (kDebugMode) print("[Go Raw]: $line");
+              // 處理未格式化的輸出
+              if (kDebugMode && line.isNotEmpty) {
+                print("[Go Raw]: $line");
+              }
             }
           });
-
-      // 4. 監聽錯誤輸出 (stderr)
-      _process!.stderr.transform(utf8.decoder).listen((data) {
-        onLog("💥 系統錯誤: $data");
-      });
 
       // 5. 等待程式結束
       final exitCode = await _process!.exitCode;

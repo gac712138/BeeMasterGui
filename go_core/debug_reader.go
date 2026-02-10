@@ -9,8 +9,7 @@ import (
 
 // PerformFinalDebugCheck 執行最終的一致性比對
 func PerformFinalDebugCheck(t Transporter, meta FileMeta, prefix string) (bool, error) {
-	reportLog("%s ⚖️  === 啟動語音一致性比對 ===", prefix)
-	reportLog("%s 🤝 === 連線成功 (握手完成) ===", prefix)
+	reportLog("%s ⚖️  === 正在啟動語音一致性比對 ===", prefix)
 
 	reportLog("%s ⏳ 正在緩衝連線，等待 10 秒...", prefix)
 	time.Sleep(10 * time.Second)
@@ -22,9 +21,9 @@ func PerformFinalDebugCheck(t Transporter, meta FileMeta, prefix string) (bool, 
 	_, localTracks := parseHeaderBytes(meta.RawData[:606], "Local ADS", prefix)
 
 	// 解鎖設備
-	reportLog("%s 🔓 正在解鎖設備 (Set Engineering Mode)...", prefix)
+	reportLog("%s  正在解鎖設備 (Set Engineering Mode)...", prefix)
 	if !unlockDevice(t, prefix) {
-		reportLog("%s ❌ 解鎖失敗，無法讀取", prefix)
+		reportLog("%s ❌ 讀取設備失敗，無法讀取語音", prefix)
 		return false, fmt.Errorf("解鎖失敗") // 這裡回傳 error，main.go 會執行 RELEASE
 	}
 
@@ -48,15 +47,15 @@ func PerformFinalDebugCheck(t Transporter, meta FileMeta, prefix string) (bool, 
 // unlockDevice (保持不變)
 func unlockDevice(t Transporter, prefix string) bool {
 	var f uint16 = 0
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 3; i++ {
 		t.ResetBuffer()
 		t.SendCmd(0x20, &f, []byte{0xE6, 0x01})
 		if err := t.WaitForACK(2 * time.Second); err == nil {
 			return true
 		}
 		// 建議改為：每次失敗都等一秒，給設備喘息機會
-		reportLog("%s 🔓 解鎖嘗試 %d 失敗，等待 1s...", prefix, i+1)
-		time.Sleep(1 * time.Second)
+		reportLog("%s 嘗試讀取語音失敗 %d/3 ，等待 2s...", prefix, i+1)
+		time.Sleep(2 * time.Second)
 	}
 	return false
 }

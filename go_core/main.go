@@ -121,7 +121,7 @@ func productionWorker(port string, jobs chan Job) {
 
 					markDeviceProgress(job.MAC, 0, true) // 燒完 100%，標記 Done
 					t.Disconnect()
-					reportLog("%s 🛌 設備重啟，等待 15s...", prefix)
+					reportLog("%s 🔁 設備重啟，等待 15s...", prefix)
 					time.Sleep(15 * time.Second)
 				} else {
 					reportLog("%s ⏩ 偵測到已燒錄完成，接力執行檢查...", prefix)

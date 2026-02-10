@@ -86,8 +86,21 @@ class BurnTaskController {
   }
 
   void _addGlobalLog(String msg, String source) {
+    // 1. 取得時間戳記 [HH:mm:ss]
     final time = DateFormat('HH:mm:ss').format(DateTime.now());
-    globalLogs.add("[$time][$source] $msg");
+
+    // 2. 清理訊息內容：移除機器人 (🤖)、沙漏 (⌛) 以及多餘的冒號空格
+    // 同時確保「進度」與數字之間沒有多餘空格以統一寬度
+    String cleanMsg = msg
+        .replaceAll('🤖', '')
+        .replaceAll('⌛', '')
+        .replaceAll('進度: ', '進度')
+        .trim();
+
+    // 3. 重新組裝：拿掉原本的 [$source]，因為 Go 傳過來的訊息開頭已經包含 [COMx][DasLoop-ID]
+    // 最終格式：[10:39:11][COM33][Dasloop-LLBMTPE006517] 進度5% (52032/1038854)
+    globalLogs.add("[$time]$cleanMsg");
+
     if (globalLogs.length > 1000) globalLogs.removeAt(0);
     onStateChanged();
   }
