@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../pages/device_import.dart';
-import '../pages/login_page.dart';
+import "device_import.dart";
+import 'login_page.dart';
 
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
@@ -10,7 +10,7 @@ class MainLayout extends StatefulWidget {
 }
 
 class _MainLayoutState extends State<MainLayout> {
-  int _selectedIndex = 0;
+  int _selectedIndex = 1;
   bool _isCollapsed = false; // 控制側邊欄收合狀態
 
   void _refreshUI() {
@@ -43,8 +43,6 @@ class _MainLayoutState extends State<MainLayout> {
                 // 選單內容
                 Column(
                   children: [
-                    _buildLogo(),
-                    const Divider(height: 1),
                     const SizedBox(height: 10),
                     _buildMenuItem(0, Icons.upload_file, "裝置匯入"),
                     _buildMenuItem(1, Icons.login, "登入設定"),
@@ -53,7 +51,7 @@ class _MainLayoutState extends State<MainLayout> {
                       const Padding(
                         padding: EdgeInsets.all(20),
                         child: Text(
-                          "Ver 3.0.1",
+                          "Ver 1.0.0",
                           style: TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                       ),
@@ -114,47 +112,6 @@ class _MainLayoutState extends State<MainLayout> {
                   : LoginPage(onLoginSuccess: _refreshUI),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLogo() {
-    return Container(
-      height: 80,
-      padding: EdgeInsets.symmetric(horizontal: _isCollapsed ? 0 : 20),
-      alignment: _isCollapsed ? Alignment.center : Alignment.centerLeft,
-      child: Row(
-        mainAxisAlignment: _isCollapsed
-            ? MainAxisAlignment.center
-            : MainAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.amber,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text(
-              "B",
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-              ),
-            ),
-          ),
-          if (!_isCollapsed) ...[
-            const SizedBox(width: 10),
-            const Flexible(
-              child: Text(
-                "ROTW",
-                overflow: TextOverflow.fade,
-                softWrap: false,
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
         ],
       ),
     );

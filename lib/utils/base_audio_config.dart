@@ -1,4 +1,4 @@
-import '../app_state.dart';
+import 'app_state.dart';
 
 class BaseAudioConfig {
   // 🎯 這是從 C# 代碼中提取出的專屬 S3 路徑

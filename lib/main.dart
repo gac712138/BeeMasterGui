@@ -1,6 +1,6 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
-import 'layout/main_layout.dart'; // 引入版型
+import 'screen/main_layout.dart';
 
 void main() {
   runApp(const BeeMasterApp());

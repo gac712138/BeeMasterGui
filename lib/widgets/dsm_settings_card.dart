@@ -3,7 +3,7 @@ import 'package:path/path.dart' as p;
 import 'package:beemaster_ui/utils/burn_task_sheet.dart';
 // 引入必要的 Service 與其他檔案
 import 'package:beemaster_ui/services/ads_service.dart';
-import 'package:beemaster_ui/app_state.dart';
+import 'package:beemaster_ui/utils/app_state.dart';
 
 class DsmSettingsCard extends StatefulWidget {
   // ✅ 新增：接收來自父層 (DeviceImportPage) 的有效 ID 列表
@@ -277,18 +277,18 @@ class _DsmSettingsCardState extends State<DsmSettingsCard> {
   @override
   Widget build(BuildContext context) {
     bool isOk = AppState.isDsmLoggedIn;
-
-    // ✅ 判斷按鈕狀態：如果檔案準備好了，但沒有 DasID，則不允許點擊
     bool canUpdateVoice = _isAdsReady && widget.validDasIds.isNotEmpty;
 
+    // 🔥 結構：Column -> [標題, Spacer/Expanded(白卡片)]
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Status Header
+        // 1. DSM 標題 (固定高度)
         Row(
           children: [
             const Text("DSM 設定", style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(width: 10),
+            // ... (狀態燈號保持不變)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
@@ -318,35 +318,40 @@ class _DsmSettingsCardState extends State<DsmSettingsCard> {
         ),
         const SizedBox(height: 10),
 
-        // Main Card
-        Container(
-          padding: const EdgeInsets.all(25),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 5),
-              ),
-            ],
-          ),
-          child: isOk
-              ? _buildLoggedInContent(canUpdateVoice)
-              : const Center(
-                  child: Text("請先登入", style: TextStyle(color: Colors.grey)),
+        // 2. 白色卡片本體 (填滿剩餘高度)
+        // 🔥 關鍵修改 3：這裡也要 Expanded，承接父層給的高度
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(25),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
                 ),
+              ],
+            ),
+            // 如果沒登入，顯示置中文字；如果登入，顯示內容
+            child: isOk
+                ? _buildLoggedInContent(canUpdateVoice)
+                : const Center(
+                    child: Text("請先登入", style: TextStyle(color: Colors.grey)),
+                  ),
+          ),
         ),
       ],
     );
   }
 
   Widget _buildLoggedInContent(bool canUpdateVoice) {
+    // 🔥 結構：Column -> [下拉選單, 標題, Expanded(列表), 按鈕]
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Project Dropdown
+        // A. 下拉選單 (固定高度)
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 15),
           decoration: BoxDecoration(
@@ -402,70 +407,89 @@ class _DsmSettingsCardState extends State<DsmSettingsCard> {
         ),
         const SizedBox(height: 8),
 
-        // Audio List
-        Container(
-          width: double.infinity,
-          constraints: const BoxConstraints(maxHeight: 250),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey[200]!),
-          ),
-          child: _isLoadingAudios
-              ? const Center(child: CircularProgressIndicator())
-              : AppState.currentProjectAudios.isEmpty
-              ? const Center(
-                  child: Text("無資料", style: TextStyle(color: Colors.grey)),
-                )
-              : ListView.separated(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  itemCount: AppState.currentProjectAudios.length,
-                  separatorBuilder: (c, i) =>
-                      Divider(height: 1, color: Colors.grey[100]),
-                  itemBuilder: (context, index) {
-                    final audio = AppState.currentProjectAudios[index];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                audio.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                audio.content ?? "",
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (audio.fileUrl != null)
-                            Text(
-                              p.basename(Uri.parse(audio.fileUrl!).path),
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.blueGrey,
+        // B. 音訊列表 (彈性高度)
+        // 🔥 關鍵修改 4：列表容器使用 Expanded
+        // 這解決了「小畫面爆版」的問題，因為它會自動縮小並產生卷軸
+        Expanded(
+          child: Container(
+            width: double.infinity,
+            // 注意：這裡移除了 constraints: BoxConstraints(maxHeight: 250)
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey[200]!),
+            ),
+            child: _isLoadingAudios
+                ? const Center(child: CircularProgressIndicator())
+                : AppState.currentProjectAudios.isEmpty
+                ? const Center(
+                    child: Text("無資料", style: TextStyle(color: Colors.grey)),
+                  )
+                : ListView.separated(
+                    // 讓 ListView 在有限空間內滾動
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: AppState.currentProjectAudios.length,
+                    separatorBuilder: (c, i) =>
+                        Divider(height: 1, color: Colors.grey[100]),
+                    itemBuilder: (context, index) {
+                      final audio = AppState.currentProjectAudios[index];
+                      // ... (Item 內容保持不變) ...
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    audio.name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                  Text(
+                                    audio.content ?? "",
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                ],
                               ),
                             ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+                            const SizedBox(width: 10),
+                            if (audio.fileUrl != null)
+                              Container(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 120,
+                                ),
+                                child: Text(
+                                  p.basename(Uri.parse(audio.fileUrl!).path),
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.blueGrey,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
         ),
 
         const SizedBox(height: 15),
 
-        // Action Buttons
+        // C. 按鈕區 (固定高度)
         Row(
           children: [
             Expanded(
@@ -485,25 +509,18 @@ class _DsmSettingsCardState extends State<DsmSettingsCard> {
               child: _isProcessingAds
                   ? const Center(child: CircularProgressIndicator())
                   : ElevatedButton(
-                      // ✅ 邏輯判斷：
-                      // 1. 如果 ADS 檔案還沒好 -> 點擊開啟來源選擇 (_showSourceSelection)
-                      // 2. 如果 ADS 檔案好了 -> 判斷有無 DasID (canUpdateVoice)
-                      //    有 -> 開啟燒錄視窗 (_openOverlay)
-                      //    無 -> 按鈕變灰 (null)
                       onPressed: !_isAdsReady
                           ? _showSourceSelection
                           : (canUpdateVoice ? _openOverlay : null),
-
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue[50],
                         foregroundColor: Colors.blue[900],
-                        // 當按鈕被 disable (null) 時的顏色
                         disabledBackgroundColor: Colors.grey[200],
                         disabledForegroundColor: Colors.grey[400],
                         elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 15),
                       ),
-                      child: Text(_isAdsReady ? "更新語音" : "產生語音"),
+                      child: Text(_isAdsReady ? "更新語音" : "選擇語音"),
                     ),
             ),
           ],

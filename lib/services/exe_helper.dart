@@ -14,7 +14,7 @@ class ExeHelper {
 
       // 2. 為了確保版本最新，建議每次都覆蓋 (或檢查 hash)
       // 讀取 assets 裡的 binary
-      final data = await rootBundle.load('assets/bin/worker.exe');
+      final data = await rootBundle.load('worker.exe');
       final bytes = data.buffer.asUint8List();
 
       // 寫入硬碟

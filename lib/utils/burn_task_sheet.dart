@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:beemaster_ui/controllers/burn_task_controller.dart';
+import 'package:beemaster_ui/utils/burn_task_controller.dart';
 
 class BurnTaskOverlay extends StatefulWidget {
   final String adsFilePath;
@@ -482,14 +482,37 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
       child: GridView.builder(
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          childAspectRatio: 1.8,
+          childAspectRatio: 1.6, // 稍微調整比例，讓文字更清楚
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
         ),
         itemCount: ports.length,
         itemBuilder: (context, index) {
           final port = ports[index];
-          final isBusy = _controller.busyDonglePorts.contains(port);
+
+          // 🔥 改進 1：透過 Controller 獲取更精確的狀態文字
+          final statusText = _controller.getPortStatusText(port);
+          final isBusy = _controller.isPortBusy(port);
+
+          // 🔥 改進 2：如果忙碌，嘗試找出它正在處理哪個任務，顯示進度
+          String detailText = statusText;
+          if (isBusy) {
+            // 嘗試找對應任務
+            try {
+              final task = _controller.tasks.values.firstWhere(
+                (t) => t.assignedPort == port,
+              );
+              if (task.status == JobStatus.burning) {
+                detailText = "燒錄 ${(task.progress * 100).toInt()}%";
+              } else if (task.status == JobStatus.verifying) {
+                detailText = "驗證中";
+              } else {
+                detailText = "作業中";
+              }
+            } catch (e) {
+              // 找不到對應任務，維持原樣
+            }
+          }
 
           return Container(
             decoration: BoxDecoration(
@@ -509,11 +532,13 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
                     fontSize: 13,
                   ),
                 ),
+                const SizedBox(height: 2),
                 Text(
-                  isBusy ? "掃描中" : "待命",
+                  detailText, // 使用動態狀態文字
                   style: TextStyle(
-                    fontSize: 10,
-                    color: isBusy ? Colors.orange : Colors.green,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: isBusy ? Colors.orange[800] : Colors.green[800],
                   ),
                 ),
               ],
@@ -533,7 +558,7 @@ class _BurnTaskOverlayState extends State<BurnTaskOverlay> {
           const Icon(Icons.settings_input_component, color: Colors.blue),
           const SizedBox(width: 10),
           const Text(
-            "自動化產線控制中心 (全自動模式)",
+            "燒錄任務中心",
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const Spacer(),

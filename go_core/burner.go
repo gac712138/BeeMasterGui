@@ -15,24 +15,24 @@ func PerformFlash(t Transporter, mac string, meta FileMeta, prefix string, offse
 	var f uint16 = 0
 
 	// 1. 連線
-	fmt.Printf("%s ⏳ 連線中 (Hardware Reset)...\n", prefix)
+	reportLog("%s ⏳ 連線中 (Hardware Reset)...\n", prefix)
 	if err := t.Connect(mac); err != nil {
-		fmt.Printf("%s ❌ 連線失敗: %v\n", prefix, err)
+		reportLog("%s ❌ 連線失敗: %v\n", prefix, err)
 		return false
 	}
 
 	// 2. 解鎖 (Set Operation Mode Engineering)
-	fmt.Printf("%s 🔓 解鎖 (Unlock)...\n", prefix)
+	reportLog("%s 🔓 解鎖 (Unlock)...", prefix)
 	t.ResetBuffer()
 	t.SendCmd(0x20, &f, []byte{0xE6, 0x01})
 
 	// 等待 ACK
 	if err := t.WaitForACK(2 * time.Second); err != nil {
 		// 嘗試重發一次
-		fmt.Printf("%s ⚠️ 解鎖無回應，重試...\n", prefix)
+		reportLog("%s ⚠️ 解鎖無回應，重試...\n", prefix)
 		t.SendCmd(0x20, &f, []byte{0xE6, 0x01})
 		if err := t.WaitForACK(2 * time.Second); err != nil {
-			fmt.Printf("%s ❌ 解鎖失敗: %v\n", prefix, err)
+			reportLog("%s ❌ 解鎖失敗: %v\n", prefix, err)
 			return false
 		}
 	}
@@ -40,22 +40,22 @@ func PerformFlash(t Transporter, mac string, meta FileMeta, prefix string, offse
 
 	// 🔥 關鍵步驟: 初始化 Checksum (參考 Dart Protocol)
 	// Dart: _writeAudioData(604, 2, [0xff, 0xff])
-	fmt.Printf("%s 🧹 發送初始化指令 (Write FF to 604)...\n", prefix)
+	//reportLog("%s 🧹 發送初始化指令 (Write FF to 604)...\n", prefix)
 	t.ResetBuffer()
 	initErr := t.SendAudioChunk(&f, 604, []byte{0xFF, 0xFF})
 	if initErr != nil {
-		fmt.Printf("%s ❌ 初始化發送失敗\n", prefix)
+		reportLog("%s ❌ 初始化發送失敗\n", prefix)
 		return false
 	}
 
 	if err := t.WaitForACK(2 * time.Second); err != nil {
-		fmt.Printf("%s ⚠️ 初始化指令無回應 (可能未就緒): %v\n", prefix, err)
+		reportLog("%s ⚠️ 初始化指令無回應 (可能未就緒): %v\n", prefix, err)
 		return false
 	}
 	time.Sleep(200 * time.Millisecond)
 
 	// 3. 燒錄
-	fmt.Printf("%s 🔥 開始燒錄 (Total: %d bytes)...\n", prefix, totalSize)
+	reportLog("%s 🔥 開始燒錄 (Total: %d bytes)...", prefix, totalSize)
 	const ChunkSize = 192
 
 	lastPct := -1
@@ -89,14 +89,14 @@ func PerformFlash(t Transporter, mac string, meta FileMeta, prefix string, offse
 			} else {
 				packetRetries++
 				if packetRetries >= 2 {
-					fmt.Printf("%s ⚠️ Offset %d ACK 超時，重傳 (%d/%d)...\n", prefix, currentOffset, packetRetries, MaxPacketRetries)
+					reportLog("%s ⚠️ Offset %d ACK 超時，重傳 (%d/%d)...\n", prefix, currentOffset, packetRetries, MaxPacketRetries)
 				}
 				time.Sleep(200 * time.Millisecond)
 			}
 		}
 
 		if !packetSuccess {
-			fmt.Printf("%s ❌ 燒錄失敗：Offset %d 連續無回應\n", prefix, currentOffset)
+			reportLog("%s ❌ 燒錄失敗：Offset %d 連續無回應\n", prefix, currentOffset)
 			return false
 		}
 
@@ -105,14 +105,35 @@ func PerformFlash(t Transporter, mac string, meta FileMeta, prefix string, offse
 
 		pct := int(float64(currentOffset) / float64(totalSize) * 100)
 		if (pct > lastPct && pct%5 == 0) || currentOffset == totalSize {
-			// 🔥 加上 PROGRESS: 前綴，讓 Flutter 能夠解析
-			fmt.Printf("PROGRESS:%d\n", pct)
-			// 原本的 Log 也可以保留
-			fmt.Printf("LOG:%s ⏳ 進度: %d%% (%d/%d)\n", prefix, pct, currentOffset, totalSize)
+
+			reportProgress(mac, pct)
+			reportLog("LOG:%s ⏳ 進度: %d%% (%d/%d)\n", prefix, pct, currentOffset, totalSize)
 			lastPct = pct
 		}
 
 		time.Sleep(50 * time.Millisecond)
+	}
+	return true
+}
+
+func VerifyChecksumAndReboot(t Transporter, meta FileMeta, prefix string) bool {
+	var f uint16 = 0
+	fmt.Printf("%s 🔐 Checksum 驗證中...\n", prefix)
+
+	// 發送 604 與 605 位置的真實校驗碼
+	chkBytes := meta.RawData[604:606]
+	t.SendAudioChunk(&f, 604, chkBytes)
+
+	if err := t.WaitForACK(3 * time.Second); err != nil {
+		fmt.Printf("%s ❌ Checksum 失敗\n", prefix)
+		return false
+	}
+
+	// 下達重啟 (OpCode 0xE4) 指令 3 次
+	fmt.Printf("%s 🔄 發送重啟指令...\n", prefix)
+	for k := 0; k < 3; k++ {
+		t.SendCmd(0x20, &f, []byte{0xE4, 0x00, 0x01})
+		time.Sleep(200 * time.Millisecond)
 	}
 	return true
 }

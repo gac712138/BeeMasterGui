@@ -10,6 +10,45 @@ import (
 	"go.bug.st/serial"
 )
 
+// ==========================================
+// 1. 工具函式 (原 utils.go 邏輯)
+// ==========================================
+
+// addChecksum 計算從 Byte 1 開始的總和並附加於尾端
+func addChecksum(data []byte) []byte {
+	sum := 0
+	for i := 1; i < len(data); i++ {
+		sum += int(data[i])
+	}
+	return append(data, byte(sum&0xff))
+}
+
+// encodeAudioData 執行 +0x80 的音訊數據編碼 (Dart Protocol 關鍵邏輯)
+func encodeAudioData(rawData []byte) []byte {
+	var audioData []byte
+	for i := 0; i < len(rawData); i++ {
+		if i == 604 || i == 605 {
+			// Offset 604, 605 必須填入 0xFF (Checksum 佔位符)
+			audioData = append(audioData, 0xff)
+		} else if i < 606 {
+			// Header 區域 (0-603) 直接複製
+			audioData = append(audioData, rawData[i])
+		} else if i%2 == 0 {
+			// 內容區域：偶數位置直接複製
+			audioData = append(audioData, rawData[i])
+		} else {
+			// 🔥 內容區域：奇數位置必須 + 0x80
+			val := int(rawData[i]) + 0x80
+			audioData = append(audioData, byte(val&0xff))
+		}
+	}
+	return audioData
+}
+
+// ==========================================
+// 2. 通訊介面與實作 (原 transport.go 邏輯)
+// ==========================================
+
 type Transporter interface {
 	Connect(mac string) error
 	Disconnect() error
@@ -62,19 +101,13 @@ func (s *SerialAdaptor) Connect(mac string) error {
 	}
 	s.SendCmd(0x24, nil, connPayload)
 
-	// 🔥 唯一的修正：將原本的 4秒 改為 6秒
-	// 有些設備在藍牙連線時需要更長時間握手，多等這 2 秒可以大幅降低解鎖失敗率
 	time.Sleep(6 * time.Second)
 
 	// 4. Reset 2 (Switch Mode)
 	s.toggleDTR_RTS(100 * time.Millisecond)
-
-	// 🔥 這裡也稍微加長一點，確保 Mode 切換完成
 	time.Sleep(1 * time.Second)
 
 	// 5. Magic Command (0x21)
-	// 回歸原始：只發送不檢查 ACK (盲發)
-	// 這樣可以避免因為讀取緩衝區問題導致的誤判
 	s.SendCmd(0x21, nil, []byte{0x01})
 	time.Sleep(1 * time.Second)
 
@@ -92,6 +125,7 @@ func (s *SerialAdaptor) SendAudioChunk(_ *uint16, offset int, data []byte) error
 	return s.SendCmd(0x20, nil, payload)
 }
 
+// SendCmd 修改：呼叫外部 addChecksum 減少重複邏輯
 func (s *SerialAdaptor) SendCmd(target byte, _ *uint16, payload []byte) error {
 	if s.Port == nil {
 		return fmt.Errorf("port closed")
@@ -99,13 +133,14 @@ func (s *SerialAdaptor) SendCmd(target byte, _ *uint16, payload []byte) error {
 	s.internalFid++
 	f := s.internalFid
 	plLen := len(payload)
+
+	// 建立封包
 	packet := []byte{0x25, target, byte(f & 0xff), byte((f >> 8) & 0xff), 0x00, 0x00, byte(plLen & 0xff), byte((plLen >> 8) & 0xff)}
 	packet = append(packet, payload...)
-	sum := 0
-	for i := 1; i < len(packet); i++ {
-		sum += int(packet[i])
-	}
-	packet = append(packet, byte(sum&0xff))
+
+	// 🔥 這裡改用整合後的函式
+	packet = addChecksum(packet)
+
 	_, err := s.Port.Write(packet)
 	return err
 }
@@ -136,7 +171,6 @@ func (s *SerialAdaptor) ResetBuffer() {
 	}
 }
 
-// WaitForACK: 保持您原本的寬鬆檢查邏輯
 func (s *SerialAdaptor) WaitForACK(timeout time.Duration) error {
 	if s.Port == nil {
 		return fmt.Errorf("port closed")

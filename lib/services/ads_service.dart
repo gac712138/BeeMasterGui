@@ -5,8 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
-import '../app_state.dart';
-import '../config.dart';
+import '../utils/app_state.dart';
+import '../utils/config.dart';
 import '../utils/ads_encoder.dart';
 
 class AdsService {

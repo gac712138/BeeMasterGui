@@ -1,8 +1,8 @@
 // lib/utils/ads_encoder.dart
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
-import '../app_state.dart';
-import '../config/base_audio_config.dart';
+import 'app_state.dart';
+import 'base_audio_config.dart';
 
 class AdsEncoder {
   static Future<Uint8List> convertToAds(
